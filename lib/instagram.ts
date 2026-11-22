@@ -74,32 +74,26 @@ async function waitUntilContainerReady(containerId: string, accessToken: string)
 }
 
 /**
- * Postar en enskild produkt (bild + text + länk) till Instagram-kontot.
- * Kastar ett tydligt fel om något går fel - fångas upp och loggas av
- * anroparen (lib/autoPost.ts), precis som PostNord-mönstret i Farvyo
- * (logga tydligt, men krascha aldrig hela flödet i onödan).
+ * Lågnivå-primitiv (utbruten 2026-11-22 från den ursprungliga
+ * postProductToInstagram, för att kampanj-annonsfunktionen i
+ * lib/campaignAds.ts kan återanvända exakt samma tvåstegsflöde utan en
+ * ShopifyProduct - en kampanj-annons är inte en produkt). Skapar OCH
+ * publicerar en bild (valfria extra media-fält, t.ex. media_type för
+ * en story) - oförändrad logik, bara generaliserad.
  */
-export async function postProductToInstagram(
-  product: ShopifyProduct
+async function createAndPublishImage(
+  accountId: string,
+  accessToken: string,
+  imageUrl: string,
+  extraFields: Record<string, string>
 ): Promise<{ mediaId: string }> {
-  const accountId = process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID;
-  if (!accountId) {
-    throw new Error("INSTAGRAM_BUSINESS_ACCOUNT_ID saknas i miljövariablerna.");
-  }
-  if (!product.imageUrl) {
-    throw new Error(`Produkten "${product.title}" saknar bild - kan inte postas.`);
-  }
-
-  const accessToken = await getValidInstagramAccessToken();
-  const caption = buildCaption(product);
-
   const createRes = await fetch(`https://graph.instagram.com/${GRAPH_VERSION}/${accountId}/media`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      image_url: product.imageUrl,
-      caption,
+      image_url: imageUrl,
       access_token: accessToken,
+      ...extraFields,
     }),
   });
 
@@ -137,6 +131,39 @@ export async function postProductToInstagram(
 }
 
 /**
+ * Postar en valfri bild + bildtext till Instagram-FLÖDET. Används av
+ * både postProductToInstagram (nedan) och kampanj-annonserna
+ * (lib/campaignAds.ts) - den här känner inte till produkter alls,
+ * bara bild-URL + text.
+ */
+export async function postImageToInstagram(
+  imageUrl: string,
+  caption: string
+): Promise<{ mediaId: string }> {
+  const accountId = process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID;
+  if (!accountId) {
+    throw new Error("INSTAGRAM_BUSINESS_ACCOUNT_ID saknas i miljövariablerna.");
+  }
+  const accessToken = await getValidInstagramAccessToken();
+  return createAndPublishImage(accountId, accessToken, imageUrl, { caption });
+}
+
+/**
+ * Postar en enskild produkt (bild + text + länk) till Instagram-kontot.
+ * Kastar ett tydligt fel om något går fel - fångas upp och loggas av
+ * anroparen (lib/autoPost.ts), precis som PostNord-mönstret i Farvyo
+ * (logga tydligt, men krascha aldrig hela flödet i onödan).
+ */
+export async function postProductToInstagram(
+  product: ShopifyProduct
+): Promise<{ mediaId: string }> {
+  if (!product.imageUrl) {
+    throw new Error(`Produkten "${product.title}" saknar bild - kan inte postas.`);
+  }
+  return postImageToInstagram(product.imageUrl, buildCaption(product));
+}
+
+/**
  * Postar produktbilden som en Instagram STORY (byggd 2026-11-22) - samma
  * tvåstegsflöde som ett vanligt inlägg (media → media_publish), bara med
  * media_type=STORIES tillagt. Extra räckvidd/visningar utöver flödesinlägget,
@@ -150,55 +177,23 @@ export async function postProductToInstagram(
 export async function postProductToInstagramStory(
   product: ShopifyProduct
 ): Promise<{ mediaId: string }> {
+  if (!product.imageUrl) {
+    throw new Error(`Produkten "${product.title}" saknar bild - kan inte postas som story.`);
+  }
+  return postImageToInstagramStory(product.imageUrl);
+}
+
+/**
+ * Postar en valfri bild som Instagram-STORY (ingen bildtext - Meta
+ * tillåter inte text/länk-stickers via det här API:et, se kommentaren
+ * längst upp i filen). Används av både postProductToInstagramStory
+ * (ovan) och kampanj-annonserna (lib/campaignAds.ts).
+ */
+export async function postImageToInstagramStory(imageUrl: string): Promise<{ mediaId: string }> {
   const accountId = process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID;
   if (!accountId) {
     throw new Error("INSTAGRAM_BUSINESS_ACCOUNT_ID saknas i miljövariablerna.");
   }
-  if (!product.imageUrl) {
-    throw new Error(`Produkten "${product.title}" saknar bild - kan inte postas som story.`);
-  }
-
   const accessToken = await getValidInstagramAccessToken();
-
-  const createRes = await fetch(`https://graph.instagram.com/${GRAPH_VERSION}/${accountId}/media`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      image_url: product.imageUrl,
-      media_type: "STORIES",
-      access_token: accessToken,
-    }),
-  });
-
-  if (!createRes.ok) {
-    const bodyText = await createRes.text().catch(() => "(kunde inte läsa svaret)");
-    throw new Error(
-      `Kunde inte skapa Instagram-story (media): HTTP ${createRes.status} - ${bodyText.slice(0, 500)}`
-    );
-  }
-
-  const createData = (await createRes.json()) as { id: string };
-  await waitUntilContainerReady(createData.id, accessToken);
-
-  const publishRes = await fetch(
-    `https://graph.instagram.com/${GRAPH_VERSION}/${accountId}/media_publish`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        creation_id: createData.id,
-        access_token: accessToken,
-      }),
-    }
-  );
-
-  if (!publishRes.ok) {
-    const bodyText = await publishRes.text().catch(() => "(kunde inte läsa svaret)");
-    throw new Error(
-      `Kunde inte publicera Instagram-story: HTTP ${publishRes.status} - ${bodyText.slice(0, 500)}`
-    );
-  }
-
-  const publishData = (await publishRes.json()) as { id: string };
-  return { mediaId: publishData.id };
+  return createAndPublishImage(accountId, accessToken, imageUrl, { media_type: "STORIES" });
 }

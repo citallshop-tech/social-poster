@@ -59,6 +59,47 @@ async function getAdminApiToken(domain: string): Promise<string> {
 }
 
 /**
+ * Generisk Admin GraphQL-hjälpare - byggd 2026-11-22 för kampanj-
+ * annonsfunktionen (lib/discounts.ts behöver fråga efter aktiva
+ * rabattkoder, vilket inte finns i det äldre REST-flödet ovan).
+ * Återanvänder exakt samma token-hämtning (getAdminApiToken) som
+ * getProductsFromCollection - ingen ny autentisering behövs.
+ */
+export async function adminGraphQL<T>(
+  query: string,
+  variables?: Record<string, unknown>
+): Promise<T> {
+  const domain = process.env.SHOPIFY_STORE_DOMAIN;
+  if (!domain) {
+    throw new Error("SHOPIFY_STORE_DOMAIN saknas.");
+  }
+  const token = await getAdminApiToken(domain);
+
+  const res = await fetch(`https://${domain}/admin/api/2025-01/graphql.json`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shopify-Access-Token": token,
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+
+  if (!res.ok) {
+    const bodyText = await res.text().catch(() => "(kunde inte läsa svaret)");
+    throw new Error(`Shopify GraphQL HTTP ${res.status}: ${bodyText.slice(0, 500)}`);
+  }
+
+  const json = (await res.json()) as { data?: T; errors?: unknown };
+  if (json.errors) {
+    throw new Error(`Shopify GraphQL-fel: ${JSON.stringify(json.errors).slice(0, 500)}`);
+  }
+  if (!json.data) {
+    throw new Error("Shopify GraphQL returnerade inget data-fält.");
+  }
+  return json.data;
+}
+
+/**
  * Fetches products from a Shopify collection by its handle (the part of
  * the URL after /collections/, e.g. "hemma" for citall.store/collections/hemma).
  * Uses the Admin API - requires SHOPIFY_STORE_DOMAIN, SHOPIFY_CLIENT_ID och

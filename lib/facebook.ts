@@ -38,6 +38,60 @@ function buildCaption(product: ShopifyProduct): string {
 }
 
 /**
+ * Lågnivå-primitiv (utbruten 2026-11-22 från den ursprungliga
+ * postProductToFacebook, så kampanj-annonsfunktionen i
+ * lib/campaignAds.ts kan återanvända samma uppladdning utan en
+ * ShopifyProduct). Laddar upp en bild till sidan - extraFields styr om
+ * den publiceras direkt (vanligt inlägg) eller inte (story, steg 1).
+ */
+async function uploadPhoto(
+  pageId: string,
+  pageAccessToken: string,
+  imageUrl: string,
+  extraFields: Record<string, string | boolean>
+): Promise<{ id: string; post_id?: string }> {
+  const res = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${pageId}/photos`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      url: imageUrl,
+      access_token: pageAccessToken,
+      ...extraFields,
+    }),
+  });
+
+  if (!res.ok) {
+    const bodyText = await res.text().catch(() => "(kunde inte läsa svaret)");
+    throw new Error(
+      `Kunde inte publicera Facebook-bild: HTTP ${res.status} - ${bodyText.slice(0, 500)}`
+    );
+  }
+
+  return (await res.json()) as { id: string; post_id?: string };
+}
+
+/**
+ * Postar en valfri bild + bildtext till Facebook-sidans FLÖDE. Används
+ * av både postProductToFacebook (nedan) och kampanj-annonserna
+ * (lib/campaignAds.ts).
+ */
+export async function postImageToFacebook(
+  imageUrl: string,
+  caption: string
+): Promise<{ postId: string }> {
+  const pageId = process.env.FACEBOOK_PAGE_ID;
+  const pageAccessToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+  if (!pageId) {
+    throw new Error("FACEBOOK_PAGE_ID saknas i miljövariablerna.");
+  }
+  if (!pageAccessToken) {
+    throw new Error("FACEBOOK_PAGE_ACCESS_TOKEN saknas i miljövariablerna.");
+  }
+  const data = await uploadPhoto(pageId, pageAccessToken, imageUrl, { caption });
+  return { postId: data.post_id ?? data.id };
+}
+
+/**
  * Postar en enskild produkt (bild + text + länk) till Facebook-sidan.
  * Kastar ett tydligt fel om något går fel - fångas upp och loggas separat
  * från Instagram-postningen av anroparen (lib/autoPost.ts), så att ett
@@ -46,40 +100,10 @@ function buildCaption(product: ShopifyProduct): string {
 export async function postProductToFacebook(
   product: ShopifyProduct
 ): Promise<{ postId: string }> {
-  const pageId = process.env.FACEBOOK_PAGE_ID;
-  const pageAccessToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
-
-  if (!pageId) {
-    throw new Error("FACEBOOK_PAGE_ID saknas i miljövariablerna.");
-  }
-  if (!pageAccessToken) {
-    throw new Error("FACEBOOK_PAGE_ACCESS_TOKEN saknas i miljövariablerna.");
-  }
   if (!product.imageUrl) {
     throw new Error(`Produkten "${product.title}" saknar bild - kan inte postas.`);
   }
-
-  const caption = buildCaption(product);
-
-  const res = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${pageId}/photos`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      url: product.imageUrl,
-      caption,
-      access_token: pageAccessToken,
-    }),
-  });
-
-  if (!res.ok) {
-    const bodyText = await res.text().catch(() => "(kunde inte läsa svaret)");
-    throw new Error(
-      `Kunde inte publicera Facebook-inlägg: HTTP ${res.status} - ${bodyText.slice(0, 500)}`
-    );
-  }
-
-  const data = (await res.json()) as { post_id?: string; id: string };
-  return { postId: data.post_id ?? data.id };
+  return postImageToFacebook(product.imageUrl, buildCaption(product));
 }
 
 /**
@@ -103,37 +127,29 @@ export async function postProductToFacebook(
 export async function postProductToFacebookStory(
   product: ShopifyProduct
 ): Promise<{ postId: string }> {
+  if (!product.imageUrl) {
+    throw new Error(`Produkten "${product.title}" saknar bild - kan inte postas som story.`);
+  }
+  return postImageToFacebookStory(product.imageUrl);
+}
+
+/**
+ * Postar en valfri bild som Facebook-sida-STORY (samma Page Stories
+ * API-flöde som ovan, utan ShopifyProduct). Används av både
+ * postProductToFacebookStory (ovan) och kampanj-annonserna
+ * (lib/campaignAds.ts).
+ */
+export async function postImageToFacebookStory(imageUrl: string): Promise<{ postId: string }> {
   const pageId = process.env.FACEBOOK_PAGE_ID;
   const pageAccessToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
-
   if (!pageId) {
     throw new Error("FACEBOOK_PAGE_ID saknas i miljövariablerna.");
   }
   if (!pageAccessToken) {
     throw new Error("FACEBOOK_PAGE_ACCESS_TOKEN saknas i miljövariablerna.");
   }
-  if (!product.imageUrl) {
-    throw new Error(`Produkten "${product.title}" saknar bild - kan inte postas som story.`);
-  }
 
-  const uploadRes = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${pageId}/photos`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      url: product.imageUrl,
-      published: false,
-      access_token: pageAccessToken,
-    }),
-  });
-
-  if (!uploadRes.ok) {
-    const bodyText = await uploadRes.text().catch(() => "(kunde inte läsa svaret)");
-    throw new Error(
-      `Kunde inte ladda upp bild för Facebook-story: HTTP ${uploadRes.status} - ${bodyText.slice(0, 500)}`
-    );
-  }
-
-  const uploadData = (await uploadRes.json()) as { id: string };
+  const uploadData = await uploadPhoto(pageId, pageAccessToken, imageUrl, { published: false });
 
   const storyRes = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${pageId}/photo_stories`, {
     method: "POST",

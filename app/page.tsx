@@ -6,6 +6,8 @@ export default function HomePage() {
   const [secret, setSecret] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [adStatus, setAdStatus] = useState<string | null>(null);
+  const [adLoading, setAdLoading] = useState(false);
 
   async function handlePostNow() {
     setLoading(true);
@@ -41,6 +43,50 @@ export default function HomePage() {
     }
   }
 
+  async function handlePostCampaignAdNow() {
+    setAdLoading(true);
+    setAdStatus(null);
+    try {
+      const res = await fetch("/api/admin/post-campaign-ad-now", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ secret }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAdStatus(`Fel: ${data.error ?? "okänt"}`);
+      } else if (data.skipped) {
+        setAdStatus(`Hoppade över: ${data.skipped}`);
+      } else {
+        const line = (label: string, r: { ok: boolean; id?: string; error?: string } | undefined) =>
+          r?.ok ? `${label} OK (${r.id})` : `${label} FEL: ${r?.error ?? "okänt"}`;
+        setAdStatus(
+          (data.posted as Array<{
+            campaign: string;
+            instagram: { ok: boolean; id?: string; error?: string };
+            instagramStory: { ok: boolean; id?: string; error?: string };
+            facebook: { ok: boolean; id?: string; error?: string };
+            facebookStory: { ok: boolean; id?: string; error?: string };
+          }>)
+            .map((p) =>
+              [
+                `Kampanj: "${p.campaign}"`,
+                line("Instagram-flöde", p.instagram),
+                line("Instagram-story", p.instagramStory),
+                line("Facebook-flöde", p.facebook),
+                line("Facebook-story", p.facebookStory),
+              ].join(" — ")
+            )
+            .join("\n")
+        );
+      }
+    } catch (err) {
+      setAdStatus(`Fel: ${err instanceof Error ? err.message : "okänt"}`);
+    } finally {
+      setAdLoading(false);
+    }
+  }
+
   return (
     <main style={{ fontFamily: "sans-serif", padding: 40, maxWidth: 640, margin: "0 auto" }}>
       <h1>Social poster — C it all store</h1>
@@ -66,6 +112,23 @@ export default function HomePage() {
           {loading ? "Postar..." : "Posta nästa produkt nu"}
         </button>
         {status && <p style={{ marginTop: 16, whiteSpace: "pre-wrap" }}>{status}</p>}
+      </div>
+
+      <div style={{ marginTop: 40, borderTop: "1px solid #ddd", paddingTop: 24 }}>
+        <h2 style={{ fontSize: 18 }}>Kampanj-annons (var 3:e dag under en rabattkampanj)</h2>
+        <p>
+          Postar automatiskt en extra annons om en aktiv rabattkampanj har en
+          &quot;annonsdag&quot; idag (var 3:e dag sedan kampanjen startade). Den här
+          knappen testar det NU, oavsett vilken dag det är.
+        </p>
+        <button
+          onClick={handlePostCampaignAdNow}
+          disabled={adLoading || !secret}
+          style={{ padding: "8px 16px" }}
+        >
+          {adLoading ? "Postar..." : "Testa kampanj-annons nu"}
+        </button>
+        {adStatus && <p style={{ marginTop: 16, whiteSpace: "pre-wrap" }}>{adStatus}</p>}
       </div>
     </main>
   );
