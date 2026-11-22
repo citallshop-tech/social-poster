@@ -10,6 +10,8 @@ export default function HomePage() {
   const [adLoading, setAdLoading] = useState(false);
   const [cleanupStatus, setCleanupStatus] = useState<string | null>(null);
   const [cleanupLoading, setCleanupLoading] = useState(false);
+  const [seasonStatus, setSeasonStatus] = useState<string | null>(null);
+  const [seasonLoading, setSeasonLoading] = useState(false);
 
   async function handlePostNow() {
     setLoading(true);
@@ -122,6 +124,36 @@ export default function HomePage() {
     }
   }
 
+  async function handleSeasonSyncNow() {
+    setSeasonLoading(true);
+    setSeasonStatus(null);
+    try {
+      const res = await fetch("/api/admin/season-sync-now", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ secret }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setSeasonStatus(`Fel: ${data.error ?? "okänt"}`);
+      } else {
+        const menuLine = data.menu.changed
+          ? `Meny: lade till [${data.menu.added.join(", ") || "inget"}], tog bort [${
+              data.menu.removed.join(", ") || "inget"
+            }].`
+          : "Meny: redan rätt, ingen ändring behövdes.";
+        const discountLines = (
+          data.discounts as Array<{ season: string; code: string; action: string; error?: string }>
+        ).map((d) => `${d.season} (${d.code}): ${d.action}${d.error ? " — " + d.error : ""}`);
+        setSeasonStatus([menuLine, ...discountLines].join("\n"));
+      }
+    } catch (err) {
+      setSeasonStatus(`Fel: ${err instanceof Error ? err.message : "okänt"}`);
+    } finally {
+      setSeasonLoading(false);
+    }
+  }
+
   return (
     <main style={{ fontFamily: "sans-serif", padding: 40, maxWidth: 640, margin: "0 auto" }}>
       <h1>Social poster — C it all store</h1>
@@ -181,6 +213,24 @@ export default function HomePage() {
           {cleanupLoading ? "Städar..." : "Städa bort spam-inläggen nu"}
         </button>
         {cleanupStatus && <p style={{ marginTop: 16, whiteSpace: "pre-wrap" }}>{cleanupStatus}</p>}
+      </div>
+
+      <div style={{ marginTop: 40, borderTop: "1px solid #ddd", paddingTop: 24 }}>
+        <h2 style={{ fontSize: 18 }}>Säsongsmeny &amp; säsongsrabatter</h2>
+        <p>
+          Lägger in/tar bort säsongs- och högtidskollektioner direkt i
+          huvudmenyn beroende på dagens datum, och ser till att en matchande
+          rabattkod finns schemalagd för nästa period. Körs automatiskt varje
+          natt - den här knappen testar det NU.
+        </p>
+        <button
+          onClick={handleSeasonSyncNow}
+          disabled={seasonLoading || !secret}
+          style={{ padding: "8px 16px" }}
+        >
+          {seasonLoading ? "Synkar..." : "Testa säsongssynk nu"}
+        </button>
+        {seasonStatus && <p style={{ marginTop: 16, whiteSpace: "pre-wrap" }}>{seasonStatus}</p>}
       </div>
     </main>
   );
