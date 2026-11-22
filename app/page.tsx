@@ -8,6 +8,8 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const [adStatus, setAdStatus] = useState<string | null>(null);
   const [adLoading, setAdLoading] = useState(false);
+  const [cleanupStatus, setCleanupStatus] = useState<string | null>(null);
+  const [cleanupLoading, setCleanupLoading] = useState(false);
 
   async function handlePostNow() {
     setLoading(true);
@@ -87,6 +89,39 @@ export default function HomePage() {
     }
   }
 
+  async function handleCleanupSpamPosts() {
+    setCleanupLoading(true);
+    setCleanupStatus(null);
+    try {
+      const res = await fetch("/api/admin/cleanup-posts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ secret }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setCleanupStatus(`Fel: ${data.error ?? "okänt"}`);
+      } else {
+        const fb = data.facebook;
+        const ig = data.instagram;
+        const lines = [
+          `Facebook: ${fb.ok} av ${fb.totalAttempted} borttagna.`,
+          fb.failed.length > 0
+            ? `Misslyckades (${fb.failed.length}): ${fb.failed.map((f: { id: string; detail: string }) => f.id).join(", ")}`
+            : "Alla Facebook-inlägg/stories togs bort.",
+          ig.skipped
+            ? `Instagram: ${ig.skipped}`
+            : `Instagram: ${ig.ok} av ${ig.totalAttempted} borttagna.`,
+        ];
+        setCleanupStatus(lines.join("\n"));
+      }
+    } catch (err) {
+      setCleanupStatus(`Fel: ${err instanceof Error ? err.message : "okänt"}`);
+    } finally {
+      setCleanupLoading(false);
+    }
+  }
+
   return (
     <main style={{ fontFamily: "sans-serif", padding: 40, maxWidth: 640, margin: "0 auto" }}>
       <h1>Social poster — C it all store</h1>
@@ -129,6 +164,23 @@ export default function HomePage() {
           {adLoading ? "Postar..." : "Testa kampanj-annons nu"}
         </button>
         {adStatus && <p style={{ marginTop: 16, whiteSpace: "pre-wrap" }}>{adStatus}</p>}
+      </div>
+
+      <div style={{ marginTop: 40, borderTop: "1px solid #ddd", paddingTop: 24 }}>
+        <h2 style={{ fontSize: 18 }}>Engångsstädning (2026-11-22-incidenten)</h2>
+        <p>
+          Tar bort de ~24 felaktiga spam-inläggen (+ stories) som skapades av
+          buggen i kampanj-annonsen. Säkert att trycka flera gånger. Ta bort
+          den här sektionen när städningen är klar och koden pushats igen.
+        </p>
+        <button
+          onClick={handleCleanupSpamPosts}
+          disabled={cleanupLoading || !secret}
+          style={{ padding: "8px 16px" }}
+        >
+          {cleanupLoading ? "Städar..." : "Städa bort spam-inläggen nu"}
+        </button>
+        {cleanupStatus && <p style={{ marginTop: 16, whiteSpace: "pre-wrap" }}>{cleanupStatus}</p>}
       </div>
     </main>
   );
