@@ -26,7 +26,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       postedTitle: result.posted.title,
       instagram: result.instagram,
+      instagramStory: result.instagramStory,
       facebook: result.facebook,
+      facebookStory: result.facebookStory,
     });
   } catch (err) {
     return NextResponse.json(

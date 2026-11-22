@@ -81,3 +81,76 @@ export async function postProductToFacebook(
   const data = (await res.json()) as { post_id?: string; id: string };
   return { postId: data.post_id ?? data.id };
 }
+
+/**
+ * Postar produktbilden som en Facebook-sida-STORY (byggd 2026-11-22),
+ * via Metas dokumenterade "Page Stories API"
+ * (developers.facebook.com/docs/page-stories-api). Kräver samma
+ * pages_manage_posts-rättighet som redan finns på FACEBOOK_PAGE_ACCESS_TOKEN
+ * sen tidigare - inget nytt godkännande behövs.
+ *
+ * Tvåstegsflöde, enligt Metas egen dokumentation:
+ *   1. Ladda upp bilden OPUBLICERAD via /{page-id}/photos (published=false)
+ *      - returnerar ett photo_id. Metas regler kräver att bilden INTE redan
+ *      använts i ett publicerat inlägg, så den här uppladdningen måste vara
+ *      separat från postProductToFacebook() ovan, aldrig samma anrop/id.
+ *   2. POST /{page-id}/photo_stories med det photo_id:t - publicerar storyn.
+ *
+ * Till skillnad från Instagram-storyn (lib/instagram.ts) stöder Facebooks
+ * Page Stories-API faktiskt ingen klickbar länk-sticker heller via det här
+ * flödet - samma plattformsbegränsning, ingen länk i storyn.
+ */
+export async function postProductToFacebookStory(
+  product: ShopifyProduct
+): Promise<{ postId: string }> {
+  const pageId = process.env.FACEBOOK_PAGE_ID;
+  const pageAccessToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+
+  if (!pageId) {
+    throw new Error("FACEBOOK_PAGE_ID saknas i miljövariablerna.");
+  }
+  if (!pageAccessToken) {
+    throw new Error("FACEBOOK_PAGE_ACCESS_TOKEN saknas i miljövariablerna.");
+  }
+  if (!product.imageUrl) {
+    throw new Error(`Produkten "${product.title}" saknar bild - kan inte postas som story.`);
+  }
+
+  const uploadRes = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${pageId}/photos`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      url: product.imageUrl,
+      published: false,
+      access_token: pageAccessToken,
+    }),
+  });
+
+  if (!uploadRes.ok) {
+    const bodyText = await uploadRes.text().catch(() => "(kunde inte läsa svaret)");
+    throw new Error(
+      `Kunde inte ladda upp bild för Facebook-story: HTTP ${uploadRes.status} - ${bodyText.slice(0, 500)}`
+    );
+  }
+
+  const uploadData = (await uploadRes.json()) as { id: string };
+
+  const storyRes = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${pageId}/photo_stories`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      photo_id: uploadData.id,
+      access_token: pageAccessToken,
+    }),
+  });
+
+  if (!storyRes.ok) {
+    const bodyText = await storyRes.text().catch(() => "(kunde inte läsa svaret)");
+    throw new Error(
+      `Kunde inte publicera Facebook-story: HTTP ${storyRes.status} - ${bodyText.slice(0, 500)}`
+    );
+  }
+
+  const storyData = (await storyRes.json()) as { post_id?: string; id?: string };
+  return { postId: storyData.post_id ?? storyData.id ?? uploadData.id };
+}

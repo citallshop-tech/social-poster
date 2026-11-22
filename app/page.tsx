@@ -22,13 +22,17 @@ export default function HomePage() {
       } else if (data.skipped) {
         setStatus(`Hoppade över: ${data.skipped}`);
       } else {
-        const igLine = data.instagram?.ok
-          ? `Instagram OK (${data.instagram.id})`
-          : `Instagram FEL: ${data.instagram?.error ?? "okänt"}`;
-        const fbLine = data.facebook?.ok
-          ? `Facebook OK (${data.facebook.id})`
-          : `Facebook FEL: ${data.facebook?.error ?? "okänt"}`;
-        setStatus(`Postat: "${data.postedTitle}" — ${igLine} — ${fbLine}`);
+        const line = (label: string, r: { ok: boolean; id?: string; error?: string } | undefined) =>
+          r?.ok ? `${label} OK (${r.id})` : `${label} FEL: ${r?.error ?? "okänt"}`;
+        setStatus(
+          [
+            `Postat: "${data.postedTitle}"`,
+            line("Instagram-flöde", data.instagram),
+            line("Instagram-story", data.instagramStory),
+            line("Facebook-flöde", data.facebook),
+            line("Facebook-story", data.facebookStory),
+          ].join(" — ")
+        );
       }
     } catch (err) {
       setStatus(`Fel: ${err instanceof Error ? err.message : "okänt"}`);
@@ -41,8 +45,8 @@ export default function HomePage() {
     <main style={{ fontFamily: "sans-serif", padding: 40, maxWidth: 640, margin: "0 auto" }}>
       <h1>Social poster — C it all store</h1>
       <p>
-        Postar automatiskt en produkt om dagen till både Instagram och
-        Facebook (kl 10:00 UTC, ≈ 11–12 svensk tid).
+        Postar automatiskt till Instagram-flödet, Instagram-story,
+        Facebook-flödet och Facebook-story - tre gånger om dagen.
       </p>
       <div style={{ marginTop: 24 }}>
         <label style={{ display: "block", marginBottom: 8 }}>
@@ -61,7 +65,7 @@ export default function HomePage() {
         >
           {loading ? "Postar..." : "Posta nästa produkt nu"}
         </button>
-        {status && <p style={{ marginTop: 16 }}>{status}</p>}
+        {status && <p style={{ marginTop: 16, whiteSpace: "pre-wrap" }}>{status}</p>}
       </div>
     </main>
   );

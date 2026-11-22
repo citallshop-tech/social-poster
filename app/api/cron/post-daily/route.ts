@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { postNextProduct } from "@/lib/autoPost";
 
 /**
- * Körs automatiskt en gång om dagen av Vercel Cron (se vercel.json, kl
- * 10:00 UTC ≈ 11-12 svensk tid) - postar nästa produkt i turordning till
- * BÅDE Instagram och Facebook (byggt 2026-09-17). Skyddad med
- * CRON_SECRET, samma mönster som övriga cron-rutter i det här projektet
- * och i Farvyo/Meetrana.
+ * Körs automatiskt tre gånger om dagen av Vercel Cron (se vercel.json,
+ * uppdaterat 2026-11-22 från 1x/dag till 3x/dag på Christoffers begäran) -
+ * postar nästa produkt i turordning till Instagram-flödet, Instagram-story,
+ * Facebook-flödet OCH Facebook-story (byggt 2026-09-17, story-stödet
+ * tillagt 2026-11-22). Skyddad med CRON_SECRET, samma mönster som övriga
+ * cron-rutter i det här projektet och i Farvyo/Meetrana.
  */
 export async function GET(request: NextRequest) {
   const secret = process.env.CRON_SECRET;
@@ -22,27 +23,35 @@ export async function GET(request: NextRequest) {
   try {
     const result = await postNextProduct();
     if ("skipped" in result) {
-      console.warn(`[Social poster] Hoppade över dagens postning: ${result.skipped}`);
+      console.warn(`[Social poster] Hoppade över postningen: ${result.skipped}`);
       return NextResponse.json(result);
     }
-    if (result.instagram.ok) {
-      console.log(`[Social poster] Postade "${result.posted.title}" till Instagram (media-id ${result.instagram.id}).`);
-    } else {
-      console.error(`[Social poster] Instagram-postning misslyckades: ${result.instagram.error}`);
+
+    const channels = [
+      ["Instagram-flöde", result.instagram],
+      ["Instagram-story", result.instagramStory],
+      ["Facebook-flöde", result.facebook],
+      ["Facebook-story", result.facebookStory],
+    ] as const;
+
+    for (const [name, r] of channels) {
+      if (r.ok) {
+        console.log(`[Social poster] Postade "${result.posted.title}" till ${name} (id ${r.id}).`);
+      } else {
+        console.error(`[Social poster] ${name}-postning misslyckades: ${r.error}`);
+      }
     }
-    if (result.facebook.ok) {
-      console.log(`[Social poster] Postade "${result.posted.title}" till Facebook (post-id ${result.facebook.id}).`);
-    } else {
-      console.error(`[Social poster] Facebook-postning misslyckades: ${result.facebook.error}`);
-    }
+
     return NextResponse.json({
       postedTitle: result.posted.title,
       instagram: result.instagram,
+      instagramStory: result.instagramStory,
       facebook: result.facebook,
+      facebookStory: result.facebookStory,
     });
   } catch (err) {
     console.error(
-      "[Social poster] Daglig postning misslyckades:",
+      "[Social poster] Postningen misslyckades:",
       err instanceof Error ? err.message : err
     );
     return NextResponse.json(
