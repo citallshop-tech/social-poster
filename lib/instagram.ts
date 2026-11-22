@@ -149,10 +149,107 @@ export async function postImageToInstagram(
 }
 
 /**
- * Postar en enskild produkt (bild + text + länk) till Instagram-kontot.
- * Kastar ett tydligt fel om något går fel - fångas upp och loggas av
- * anroparen (lib/autoPost.ts), precis som PostNord-mönstret i Farvyo
- * (logga tydligt, men krascha aldrig hela flödet i onödan).
+ * Skapar ETT barn (child) i en karusell - en bild markerad
+ * is_carousel_item:true, INGEN bildtext (bildtexten sätts bara på
+ * själva karusell-containern, inte på barnen) - returnerar dess
+ * creation_id, som sen skickas in i children-listan nedan.
+ */
+async function createCarouselChild(
+  accountId: string,
+  accessToken: string,
+  imageUrl: string
+): Promise<string> {
+  const res = await fetch(`https://graph.instagram.com/${GRAPH_VERSION}/${accountId}/media`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      image_url: imageUrl,
+      is_carousel_item: true,
+      access_token: accessToken,
+    }),
+  });
+  if (!res.ok) {
+    const bodyText = await res.text().catch(() => "(kunde inte läsa svaret)");
+    throw new Error(
+      `Kunde inte skapa karusell-bild: HTTP ${res.status} - ${bodyText.slice(0, 500)}`
+    );
+  }
+  const data = (await res.json()) as { id: string };
+  return data.id;
+}
+
+/**
+ * Postar FLERA bilder som EN karusell (bildserie man bläddrar igenom i
+ * samma inlägg) till Instagram-FLÖDET - byggd 2026-11-22 på Christoffers
+ * begäran ("bild serie ... så det visas flera bilder i rad"). Kräver
+ * 2-10 bilder (Instagrams egen gräns - fler än 10 klipps bort här).
+ * Tvåstegsflöde enligt Metas dokumentation: skapa varje barn för sig
+ * (utan bildtext) → skapa en karusell-container som pekar på alla
+ * barnens id:n (MED bildtext) → publicera containern, samma
+ * väntUntilContainerReady-säkerhetsnät som ett vanligt inlägg.
+ */
+export async function postImagesToInstagramCarousel(
+  imageUrls: string[],
+  caption: string
+): Promise<{ mediaId: string }> {
+  const accountId = process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID;
+  if (!accountId) {
+    throw new Error("INSTAGRAM_BUSINESS_ACCOUNT_ID saknas i miljövariablerna.");
+  }
+  const urls = imageUrls.slice(0, 10);
+  if (urls.length < 2) {
+    throw new Error("En karusell kräver minst 2 bilder.");
+  }
+
+  const accessToken = await getValidInstagramAccessToken();
+  const childIds: string[] = [];
+  for (const url of urls) {
+    childIds.push(await createCarouselChild(accountId, accessToken, url));
+  }
+
+  const createRes = await fetch(`https://graph.instagram.com/${GRAPH_VERSION}/${accountId}/media`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      media_type: "CAROUSEL",
+      children: childIds,
+      caption,
+      access_token: accessToken,
+    }),
+  });
+  if (!createRes.ok) {
+    const bodyText = await createRes.text().catch(() => "(kunde inte läsa svaret)");
+    throw new Error(
+      `Kunde inte skapa Instagram-karusell: HTTP ${createRes.status} - ${bodyText.slice(0, 500)}`
+    );
+  }
+  const createData = (await createRes.json()) as { id: string };
+  await waitUntilContainerReady(createData.id, accessToken);
+
+  const publishRes = await fetch(
+    `https://graph.instagram.com/${GRAPH_VERSION}/${accountId}/media_publish`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ creation_id: createData.id, access_token: accessToken }),
+    }
+  );
+  if (!publishRes.ok) {
+    const bodyText = await publishRes.text().catch(() => "(kunde inte läsa svaret)");
+    throw new Error(
+      `Kunde inte publicera Instagram-karusell: HTTP ${publishRes.status} - ${bodyText.slice(0, 500)}`
+    );
+  }
+  const publishData = (await publishRes.json()) as { id: string };
+  return { mediaId: publishData.id };
+}
+
+/**
+ * Postar en enskild produkt till Instagram-kontot - som KARUSELL (bildserie)
+ * om produkten har 2 eller fler bilder i Shopify (upp till 10), annars som
+ * en vanlig enbildspost. Kastar ett tydligt fel om något går fel - fångas
+ * upp och loggas av anroparen (lib/autoPost.ts), precis som PostNord-
+ * mönstret i Farvyo (logga tydligt, men krascha aldrig hela flödet i onödan).
  */
 export async function postProductToInstagram(
   product: ShopifyProduct
@@ -160,7 +257,11 @@ export async function postProductToInstagram(
   if (!product.imageUrl) {
     throw new Error(`Produkten "${product.title}" saknar bild - kan inte postas.`);
   }
-  return postImageToInstagram(product.imageUrl, buildCaption(product));
+  const caption = buildCaption(product);
+  if (product.imageUrls.length >= 2) {
+    return postImagesToInstagramCarousel(product.imageUrls, caption);
+  }
+  return postImageToInstagram(product.imageUrl, caption);
 }
 
 /**

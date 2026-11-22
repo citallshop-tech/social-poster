@@ -97,13 +97,76 @@ export async function postImageToFacebook(
  * från Instagram-postningen av anroparen (lib/autoPost.ts), så att ett
  * fel på den ena plattformen aldrig stoppar den andra.
  */
+/**
+ * Postar FLERA bilder som ETT flerbildsinlägg (bildserie) till
+ * Facebook-sidans flöde - byggd 2026-11-22 på Christoffers begäran.
+ * Facebooks mönster för det här (dokumenterat av Meta): ladda upp varje
+ * bild OSPUBLICERAD via /{page-id}/photos (published:false, samma
+ * uploadPhoto-hjälpare som redan används för stories) - det ger ett
+ * photo_id per bild utan att skapa separata inlägg - och skapa sen ETT
+ * /{page-id}/feed-inlägg med alla photo_id:n i attached_media. Max 10
+ * bilder (samma gräns som Instagrams karusell, för konsekvens).
+ */
+export async function postImagesToFacebook(
+  imageUrls: string[],
+  caption: string
+): Promise<{ postId: string }> {
+  const pageId = process.env.FACEBOOK_PAGE_ID;
+  const pageAccessToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+  if (!pageId) {
+    throw new Error("FACEBOOK_PAGE_ID saknas i miljövariablerna.");
+  }
+  if (!pageAccessToken) {
+    throw new Error("FACEBOOK_PAGE_ACCESS_TOKEN saknas i miljövariablerna.");
+  }
+  const urls = imageUrls.slice(0, 10);
+  if (urls.length < 2) {
+    throw new Error("Ett flerbildsinlägg kräver minst 2 bilder.");
+  }
+
+  const photoIds: string[] = [];
+  for (const url of urls) {
+    const uploaded = await uploadPhoto(pageId, pageAccessToken, url, { published: false });
+    photoIds.push(uploaded.id);
+  }
+
+  const res = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${pageId}/feed`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      message: caption,
+      attached_media: photoIds.map((id) => ({ media_fbid: id })),
+      access_token: pageAccessToken,
+    }),
+  });
+
+  if (!res.ok) {
+    const bodyText = await res.text().catch(() => "(kunde inte läsa svaret)");
+    throw new Error(
+      `Kunde inte publicera Facebook-flerbildsinlägg: HTTP ${res.status} - ${bodyText.slice(0, 500)}`
+    );
+  }
+
+  const data = (await res.json()) as { id: string };
+  return { postId: data.id };
+}
+
+/**
+ * Postar en enskild produkt till Facebook-sidan - som flerbildsinlägg
+ * (bildserie) om produkten har 2 eller fler bilder i Shopify (upp till
+ * 10), annars som ett vanligt enbildsinlägg.
+ */
 export async function postProductToFacebook(
   product: ShopifyProduct
 ): Promise<{ postId: string }> {
   if (!product.imageUrl) {
     throw new Error(`Produkten "${product.title}" saknar bild - kan inte postas.`);
   }
-  return postImageToFacebook(product.imageUrl, buildCaption(product));
+  const caption = buildCaption(product);
+  if (product.imageUrls.length >= 2) {
+    return postImagesToFacebook(product.imageUrls, caption);
+  }
+  return postImageToFacebook(product.imageUrl, caption);
 }
 
 /**

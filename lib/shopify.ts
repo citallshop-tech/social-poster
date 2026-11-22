@@ -4,7 +4,10 @@ export interface ShopifyProduct {
   handle: string;
   description: string;
   priceSek: string;
+  /** Första produktbilden - samma som imageUrls[0], finns kvar för bakåtkompatibilitet (story-postning m.m. som bara vill ha EN bild). */
   imageUrl: string | null;
+  /** ALLA produktbilder, i Shopifys egen ordning - tillagd 2026-11-22 för karusell-/bildseriepostning (se postImagesToInstagramCarousel/postImagesToFacebook). Tom lista om produkten saknar bilder. */
+  imageUrls: string[];
   productUrl: string;
 }
 
@@ -171,6 +174,7 @@ export async function getProductsFromCollection(
       description: (p.body_html ?? "").replace(/<[^>]*>/g, "").trim().slice(0, 300),
       priceSek: p.variants?.[0]?.price ?? "0",
       imageUrl: p.images?.[0]?.src ?? null,
+      imageUrls: (p.images ?? []).map((img) => img.src),
       productUrl: `https://${publicDomain}/products/${p.handle}`,
     })
   );
