@@ -21,6 +21,28 @@ const CODE_LOOKUP_QUERY = `
   }
 `;
 
+const HAS_PRODUCT_QUERY = `
+  query HasProduct($id: ID!) {
+    node(id: $id) {
+      ... on Collection { hasProduct }
+    }
+  }
+`;
+
+/**
+ * En rabatt som bara gäller EN specifik kollektion ("scope: collection") är
+ * meningslös att skapa innan kollektionen har någon produkt att ge rabatt på
+ * - skapas i stället så fort den får sin första produkt (kollas varje dag,
+ * se claude/citall-store-kollektioner-taggar.md för pågående taggningsarbete).
+ * En rabatt för hela butiken ("scope: storewide") berörs inte av detta.
+ */
+async function collectionHasProduct(collectionId: string): Promise<boolean> {
+  const data = await adminGraphQL<{ node: { hasProduct: boolean } | null }>(HAS_PRODUCT_QUERY, {
+    id: collectionId,
+  });
+  return data.node?.hasProduct ?? false;
+}
+
 const CODE_CREATE_MUTATION = `
   mutation CreateCode($input: DiscountCodeBasicInput!) {
     discountCodeBasicCreate(basicCodeDiscount: $input) {
@@ -82,7 +104,7 @@ async function createDiscountCode(
 export type SeasonalDiscountResult = {
   season: string;
   code: string;
-  action: "created" | "already-existed" | "skipped-manual-year" | "error";
+  action: "created" | "already-existed" | "skipped-manual-year" | "skipped-no-products" | "error";
   error?: string;
 };
 
@@ -107,6 +129,13 @@ export async function ensureSeasonalDiscounts(
       if (exists) {
         results.push({ season: season.key, code, action: "already-existed" });
         continue;
+      }
+      if (season.discount.scope === "collection") {
+        const hasProduct = await collectionHasProduct(season.collectionId);
+        if (!hasProduct) {
+          results.push({ season: season.key, code, action: "skipped-no-products" });
+          continue;
+        }
       }
       await createDiscountCode(season, code, start, end);
       results.push({ season: season.key, code, action: "created" });

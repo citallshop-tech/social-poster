@@ -13,6 +13,13 @@ import { SEASONS, isSeasonActive, type SeasonConfig } from "./seasons";
 // exakt de säsongsrader som ska finnas just nu, och skickar tillbaka HELA
 // listan - övriga rader skickas med precis som de redan var (samma `id`,
 // så Shopify vet att det är samma rader, inte nya).
+//
+// Tillägg 2026-11-22, på Christoffers begäran: en säsong som är inom sitt
+// datumfönster men vars kollektion fortfarande har 0 produkter (produkt-
+// taggningen pågår löpande, se claude/citall-store-kollektioner-taggar.md)
+// ska INTE synas i menyn än - ingen anledning att länka kunder till en tom
+// sida. Så fort kollektionen får sin första produkt tas den upp automatiskt
+// vid nästa körning, utan att någon behöver göra något manuellt.
 // ============================================================================
 
 const MENU_HANDLE = "main-menu";
@@ -71,6 +78,24 @@ const MENU_UPDATE_MUTATION = `
   }
 `;
 
+const HAS_PRODUCT_QUERY = `
+  query HasProduct($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      ... on Collection { id hasProduct }
+    }
+  }
+`;
+
+/** Vilka av de här kollektions-GID:na har minst en produkt i sig just nu. */
+async function collectionsWithProducts(collectionIds: string[]): Promise<Set<string>> {
+  if (collectionIds.length === 0) return new Set();
+  const data = await adminGraphQL<{ nodes: Array<{ id: string; hasProduct: boolean } | null> }>(
+    HAS_PRODUCT_QUERY,
+    { ids: collectionIds }
+  );
+  return new Set(data.nodes.filter((n) => n?.hasProduct).map((n) => (n as { id: string }).id));
+}
+
 function toUpdateInput(item: RawMenuItem): MenuItemUpdateInput {
   return {
     id: item.id,
@@ -115,7 +140,9 @@ export async function syncSeasonalMenu(now: Date = new Date()): Promise<MenuSync
       .map((item) => item.resourceId as string)
   );
 
-  const activeSeasons = SEASONS.filter((s) => isSeasonActive(s, now));
+  const dueByDate = SEASONS.filter((s) => isSeasonActive(s, now));
+  const withProducts = await collectionsWithProducts(dueByDate.map((s) => s.collectionId));
+  const activeSeasons = dueByDate.filter((s) => withProducts.has(s.collectionId));
   const activeSeasonIds = new Set(activeSeasons.map((s) => s.collectionId));
 
   const sameSet =
