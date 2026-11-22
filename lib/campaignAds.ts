@@ -1,8 +1,12 @@
 import { put, head } from "@vercel/blob";
 import { getActiveDiscountCampaigns, type ActiveCampaign } from "./discounts";
 import { getProductsFromCollection, type ShopifyProduct } from "./shopify";
-import { postImageToInstagram, postImageToInstagramStory } from "./instagram";
-import { postImageToFacebook, postImageToFacebookStory } from "./facebook";
+import {
+  postImageToInstagram,
+  postImageToInstagramStory,
+  postImagesToInstagramCarousel,
+} from "./instagram";
+import { postImageToFacebook, postImageToFacebookStory, postImagesToFacebook } from "./facebook";
 
 // ============================================================================
 // Periodiska "kampanj-annons"-inlägg - byggt 2026-11-22 på Christoffers
@@ -154,14 +158,29 @@ export async function postCampaignAdsIfDue(options?: {
     return [];
   }
 
+  // Om annonsbildens produkt har flera bilder, postas en karusell/
+  // flerbildsinlägg till flödena (samma "bildserie"-mönster som de
+  // vanliga produktposterna, se lib/instagram.ts/lib/facebook.ts) -
+  // Storyn är alltid EN bild (plattformarna stödjer inte karusell-storys
+  // via det här API:et).
+  const hasMultipleImages = adImage.imageUrls.length >= 2;
+
   const results: CampaignAdResult[] = [];
   for (const campaign of due) {
     const caption = buildAdCaption(campaign);
     const [instagramResult, instagramStoryResult, facebookResult, facebookStoryResult] =
       await Promise.all([
-        toResult(postImageToInstagram(adImage.imageUrl, caption)),
+        toResult(
+          hasMultipleImages
+            ? postImagesToInstagramCarousel(adImage.imageUrls, caption)
+            : postImageToInstagram(adImage.imageUrl, caption)
+        ),
         toResult(postImageToInstagramStory(adImage.imageUrl)),
-        toResult(postImageToFacebook(adImage.imageUrl, caption)),
+        toResult(
+          hasMultipleImages
+            ? postImagesToFacebook(adImage.imageUrls, caption)
+            : postImageToFacebook(adImage.imageUrl, caption)
+        ),
         toResult(postImageToFacebookStory(adImage.imageUrl)),
       ]);
 
