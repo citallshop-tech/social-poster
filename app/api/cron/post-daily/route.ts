@@ -42,12 +42,21 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    if (!result.stateSaved) {
+      console.error(
+        `[Social poster] VARNING: posting-state sparades INTE (${result.stateSaveError ?? "okänt fel"}). ` +
+          `Samma produkt ("${result.posted.title}") kommer väljas igen nästa körning tills detta är löst.`
+      );
+    }
+
     return NextResponse.json({
       postedTitle: result.posted.title,
       instagram: result.instagram,
       instagramStory: result.instagramStory,
       facebook: result.facebook,
       facebookStory: result.facebookStory,
+      stateSaved: result.stateSaved,
+      stateSaveError: result.stateSaveError,
     });
   } catch (err) {
     console.error(

@@ -30,6 +30,9 @@ export default function HomePage() {
       } else {
         const line = (label: string, r: { ok: boolean; id?: string; error?: string } | undefined) =>
           r?.ok ? `${label} OK (${r.id})` : `${label} FEL: ${r?.error ?? "okänt"}`;
+        const stateLine = data.stateSaved
+          ? null
+          : `⚠️ STATE SPARADES INTE (${data.stateSaveError ?? "okänt fel"}) — samma produkt postas igen nästa gång tills detta fixas.`;
         setStatus(
           [
             `Postat: "${data.postedTitle}"`,
@@ -37,7 +40,10 @@ export default function HomePage() {
             line("Instagram-story", data.instagramStory),
             line("Facebook-flöde", data.facebook),
             line("Facebook-story", data.facebookStory),
-          ].join(" — ")
+            stateLine,
+          ]
+            .filter(Boolean)
+            .join(" — ")
         );
       }
     } catch (err) {

@@ -145,6 +145,15 @@ export async function postNextProduct(): Promise<
       instagramStory: PlatformResult;
       facebook: PlatformResult;
       facebookStory: PlatformResult;
+      // Tillagt 2026-11-23 efter buggrapport: samma produkt postades om och
+      // om igen trots att rotationslogiken ovan ser korrekt ut. Misstänkt
+      // orsak: writeState() (Vercel Blob) misslyckas tyst, så
+      // "postedProductIds" aldrig sparas - nästa körning tror då att INGEN
+      // produkt postats än och väljer om samma remaining[0] varje gång,
+      // för evigt. Detta fält gör felet SYNLIGT i svaret/loggen istället
+      // för att försvinna.
+      stateSaved: boolean;
+      stateSaveError?: string;
     }
   | { skipped: string }
 > {
@@ -174,11 +183,28 @@ export async function postNextProduct(): Promise<
   const anyOk =
     instagramResult.ok || instagramStoryResult.ok || facebookResult.ok || facebookStoryResult.ok;
 
+  let stateSaved = false;
+  let stateSaveError: string | undefined;
+
   if (anyOk) {
     state.postedProductIds.push(next.id);
     state.lastPostedAt = Date.now();
     state.lastPostedProductUrl = next.productUrl;
-    await writeState(state);
+    try {
+      await writeState(state);
+      stateSaved = true;
+    } catch (err) {
+      // VIKTIGT: kasta INTE vidare här. Om vi kastar förloras hela
+      // resultatet (posterna har redan gått ut till Instagram/Facebook!)
+      // och nästa körning skulle fortfarande se tom state - exakt den
+      // tysta looping-buggen detta ska göra synlig. Logga tydligt istället
+      // så felet syns i Vercel-loggen/svaret, men låt postningen räknas.
+      stateSaveError = String((err as Error)?.message ?? err);
+      console.error(
+        `[Social poster] KRITISKT: kunde INTE spara posting-state efter att "${next.title}" postades. ` +
+          `Rotationen kommer posta SAMMA produkt igen nästa gång om detta inte fixas. Fel: ${stateSaveError}`
+      );
+    }
   }
 
   return {
@@ -187,5 +213,7 @@ export async function postNextProduct(): Promise<
     instagramStory: instagramStoryResult,
     facebook: facebookResult,
     facebookStory: facebookStoryResult,
+    stateSaved,
+    ...(stateSaveError ? { stateSaveError } : {}),
   };
 }

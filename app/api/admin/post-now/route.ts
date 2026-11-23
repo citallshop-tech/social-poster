@@ -29,6 +29,8 @@ export async function POST(request: NextRequest) {
       instagramStory: result.instagramStory,
       facebook: result.facebook,
       facebookStory: result.facebookStory,
+      stateSaved: result.stateSaved,
+      stateSaveError: result.stateSaveError,
     });
   } catch (err) {
     return NextResponse.json(
